@@ -1,0 +1,59 @@
+{
+  "manifest_version": "0.4",
+  "name": "lindo-ai",
+  "display_name": "Lindo AI",
+  "version": "1.0.12",
+  "description": "Create websites, pages, and blog posts with AI. Manage clients and credits.",
+  "long_description": "Lindo AI is a website builder platform for agencies. This extension lets you create websites, pages, and blog posts using AI directly from Claude. You can also manage clients, assign websites, generate magic login links, and allocate credits — all without leaving the conversation.",
+  "author": {
+    "name": "Lindo AI",
+    "url": "https://lindo.ai"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lindoai/mcp-server"
+  },
+  "homepage": "https://lindo.ai",
+  "documentation": "https://docs.lindo.ai",
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"],
+      "env": {
+        "LINDO_API_KEY": "${user_config.api_key}"
+      }
+    }
+  },
+  "tools": [
+    { "name": "create_website", "description": "Create a new website using AI" },
+    { "name": "create_page", "description": "Create a new page on a website using AI" },
+    { "name": "create_blog", "description": "Create an AI-generated blog post on a website" },
+    { "name": "publish_blog", "description": "Publish a static markdown blog post" },
+    { "name": "list_websites", "description": "List all websites in the workspace" },
+    { "name": "create_client", "description": "Create a new client" },
+    { "name": "list_clients", "description": "List all clients" },
+    { "name": "assign_website", "description": "Assign a website to a client" },
+    { "name": "generate_magic_link", "description": "Generate a client login link" },
+    { "name": "allocate_credits", "description": "Allocate credits to a client" }
+  ],
+  "keywords": ["website", "ai", "builder", "agency", "automation", "blog", "pages"],
+  "license": "MIT",
+  "privacy_policies": [
+    "https://lindo.ai/privacy"
+  ],
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"]
+  },
+  "user_config": {
+    "api_key": {
+      "type": "string",
+      "title": "Lindo API Key",
+      "description": "Your Lindo AI API key. Get it from your workspace settings at app.lindo.ai",
+      "sensitive": true,
+      "required": true
+    }
+  }
+}
