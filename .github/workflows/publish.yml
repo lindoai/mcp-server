@@ -1,0 +1,67 @@
+name: Publish to npm and release MCPB
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Get version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Check if version already published on npm
+        id: check
+        run: |
+          PUBLISHED=$(npm view @lindoai/mcp-server version 2>/dev/null || echo "0.0.0")
+          echo "published=$PUBLISHED" >> $GITHUB_OUTPUT
+          if [ "${{ steps.version.outputs.version }}" = "$PUBLISHED" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish to npm
+        if: steps.check.outputs.skip == 'false'
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Build MCPB
+        if: steps.check.outputs.skip == 'false'
+        run: npx @anthropic-ai/mcpb pack
+
+      - name: Create GitHub Release with MCPB
+        if: steps.check.outputs.skip == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          body: |
+            ## Lindo AI MCP Server v${{ steps.version.outputs.version }}
+
+            ### Install
+            - **npm**: `npx @lindoai/mcp-server`
+            - **Claude Desktop**: Download `mcp-desktop.mcpb` below and drag into Settings → Extensions
+          files: mcp-desktop.mcpb
+          make_latest: true
+
+      - name: Skip notice
+        if: steps.check.outputs.skip == 'true'
+        run: echo "Version ${{ steps.version.outputs.version }} already published, skipping."
