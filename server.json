@@ -1,0 +1,45 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.lindoai/mcp-server",
+  "title": "Lindo AI",
+  "description": "Create and manage Lindo AI websites, pages, blogs, clients, and credits from any MCP client.",
+  "repository": {
+    "url": "https://github.com/lindoai/mcp-server",
+    "source": "github"
+  },
+  "websiteUrl": "https://lindo.ai",
+  "version": "1.0.14",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@lindoai/mcp-server",
+      "version": "1.0.14",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "LINDO_API_KEY",
+          "description": "Lindo AI API key. Create one at https://app.lindo.ai under Workspace Settings \u2192 API Keys. Requires a Business or Whitelabel plan.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.lindo.ai/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "OAuth 2.1 Bearer token. Most MCP clients (Claude, ChatGPT, Cursor, Smithery) obtain this automatically via the server's OAuth flow on first connect \u2014 no manual setup required. Format: 'Bearer <token>'.",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
