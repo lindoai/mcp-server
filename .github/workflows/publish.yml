@@ -1,0 +1,161 @@
+name: Publish to npm, MCP Registry, and release MCPB
+
+# Runs in the standalone `lindoai/mcp-server` repo (synced from the monorepo
+# at `packages/sdks/mcp-desktop/`). On every push to `main`, if `package.json`
+# has a new version, it:
+#   1. Publishes `@lindoai/mcp-server` to npm with provenance
+#   2. Publishes the server's metadata to the MCP Registry via GitHub OIDC
+#      (https://modelcontextprotocol.io/registry)
+#   3. Builds the .mcpb bundle and attaches it to a GitHub Release
+#
+# Authentication summary:
+#   - NPM_TOKEN: secret, required for npm publish.
+#   - GitHub OIDC: automatic (permissions.id-token: write), required for npm
+#     provenance AND the MCP Registry. No dedicated MCP Registry secret needed.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed for:
+      #   - npm provenance attestations
+      #   - MCP Registry github-oidc login
+      id-token: write
+      # Needed for softprops/action-gh-release to create the GitHub release.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Get version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Check if version already published on npm
+        id: check
+        run: |
+          PUBLISHED=$(npm view @lindoai/mcp-server version 2>/dev/null || echo "0.0.0")
+          echo "published=$PUBLISHED" >> $GITHUB_OUTPUT
+          if [ "${{ steps.version.outputs.version }}" = "$PUBLISHED" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      # -----------------------------------------------------------------
+      # npm publish
+      # -----------------------------------------------------------------
+      - name: Publish to npm
+        if: steps.check.outputs.skip == 'false'
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # -----------------------------------------------------------------
+      # MCP Registry publish
+      #
+      # The registry verifies that the package's `mcpName` in package.json
+      # matches the `name` in server.json, and that the npm package has been
+      # published with the version declared in server.json. We run this
+      # AFTER `npm publish` so that verification can succeed.
+      #
+      # Auth: GitHub OIDC. The `io.github.lindoai/*` namespace is locked to
+      # workflows running in the lindoai org, so no tokens to manage.
+      # -----------------------------------------------------------------
+      - name: Sync server.json version with package.json
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # Update both the top-level version and the npm package version
+          # inside packages[0]. Keep the structure otherwise untouched.
+          jq --arg v "$VERSION" \
+             '.version = $v | (.packages[] | select(.registryType == "npm") | .version) = $v' \
+             server.json > server.tmp && mv server.tmp server.json
+          echo "--- server.json after version bump ---"
+          cat server.json
+
+      - name: Validate server.json against official schema
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          SCHEMA_URL=$(jq -r '."$schema"' server.json)
+          curl -sSfL "$SCHEMA_URL" -o /tmp/server.schema.json
+          # Official server schema is JSON Schema draft-07. `--strict=false`
+          # tolerates the schema's `example` keyword (non-standard) without
+          # failing, and the "uri" format warnings are harmless.
+          npx --yes ajv-cli@5 validate \
+            --spec=draft7 \
+            --strict=false \
+            -s /tmp/server.schema.json \
+            -d server.json
+
+      - name: Install mcp-publisher
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          ARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+          URL="https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_${OS}_${ARCH}.tar.gz"
+          echo "Downloading mcp-publisher from $URL"
+          curl -sSfL "$URL" | tar xz mcp-publisher
+          ./mcp-publisher --help
+
+      - name: Authenticate to MCP Registry (GitHub OIDC)
+        if: steps.check.outputs.skip == 'false'
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server to MCP Registry
+        if: steps.check.outputs.skip == 'false'
+        # npm publish can take a few seconds to propagate to the public
+        # metadata the registry verifies against. Sleep is cheap insurance.
+        run: |
+          sleep 15
+          ./mcp-publisher publish
+
+      - name: Verify registry listing
+        if: steps.check.outputs.skip == 'false'
+        continue-on-error: true
+        run: |
+          SERVER_NAME=$(jq -r '.name' server.json)
+          sleep 5
+          curl -sSfL "https://registry.modelcontextprotocol.io/v0.1/servers?search=${SERVER_NAME}" \
+            | jq ".servers[] | select(.name == \"${SERVER_NAME}\") | { name, version }"
+
+      # -----------------------------------------------------------------
+      # Bundle + GitHub Release
+      # -----------------------------------------------------------------
+      - name: Build MCPB
+        if: steps.check.outputs.skip == 'false'
+        run: npx @anthropic-ai/mcpb pack
+
+      - name: Create GitHub Release with MCPB
+        if: steps.check.outputs.skip == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          body: |
+            ## Lindo AI MCP Server v${{ steps.version.outputs.version }}
+
+            ### Install
+
+            - **MCP Registry**: `io.github.lindoai/mcp-server`
+            - **npm**: `npx @lindoai/mcp-server`
+            - **Claude Desktop**: Download `mcp-desktop.mcpb` below and drag into Settings → Extensions
+            - **Remote (Streamable HTTP)**: `https://mcp.lindo.ai/mcp`
+          files: mcp-desktop.mcpb
+          make_latest: true
+
+      - name: Skip notice
+        if: steps.check.outputs.skip == 'true'
+        run: echo "Version ${{ steps.version.outputs.version }} already published, skipping."
